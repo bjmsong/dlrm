@@ -51,6 +51,7 @@
 # Misha Smelyanskiy, "Deep Learning Recommendation Model for Personalization and
 # Recommendation Systems", CoRR, arXiv:1906.00091, 2019
 
+# __future__: 不需要改解释器，就可以在旧版本的Python中使用新的特性或语法
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import argparse
@@ -895,6 +896,9 @@ def run():
     parser = argparse.ArgumentParser(
         description="Train Deep Learning Recommendation Model (DLRM)"
     )
+
+    # 添加参数和参数的描述
+    # "--"开头的都是可选参数
     # model related parameters
     parser.add_argument("--arch-sparse-feature-size", type=int, default=2)
     parser.add_argument(
@@ -1012,6 +1016,7 @@ def run():
     global nbatches
     global nbatches_test
     global writer
+    # 解析命令行参数，返回一个包含参数值的 Namespace 对象
     args = parser.parse_args()
 
     if args.dataset_multiprocessing:
@@ -1045,6 +1050,7 @@ def run():
             sys.exit("ERROR: 4 and 8-bit quantization on GPU is not supported")
 
     ### some basic setup ###
+    # 能够产生可重复的、确定性的随机数序列，这对于调试和测试程序非常有用
     np.random.seed(args.numpy_rand_seed)
     np.set_printoptions(precision=args.print_precision)
     torch.set_printoptions(precision=args.print_precision)
@@ -1079,6 +1085,7 @@ def run():
         print("Using CPU...")
 
     ### prepare training data ###
+    # 从字符串创建一个一维的 NumPy 数组
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
 
