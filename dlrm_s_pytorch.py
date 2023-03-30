@@ -134,6 +134,7 @@ def dlrm_wrap(X, lS_o, lS_i, use_gpu, device, ndevices=1):
                     if isinstance(lS_o, list)
                     else lS_o.to(device)
                 )
+        # 调用nn.Module的__call__()方法，会将输入传递给模型的forward()方法，并返回输出
         return dlrm(X.to(device), lS_o, lS_i)
 
 
@@ -154,7 +155,12 @@ def unpack_batch(b):
     # Experiment with unweighted samples
     return b[0], b[1], b[2], b[3], torch.ones(b[3].size()), None
 
-
+"""
+学习率调度器，用于调整模型优化器的学习率，合理的学习率可以加速模型的收敛速度
+LRPolicyScheduler主要有两个作用:
+    1. 根据一定的策略(如cosine annealing, step decay等), 动态地调整模型优化器的学习率，以便在训练过程中达到更好的性能。
+    2. 根据一些预设的条件（如训练轮数、验证集上的表现等），在训练过程中动态地更新模型优化器的参数，以适应不同的训练阶段或者应对不同的数据集。
+"""
 class LRPolicyScheduler(_LRScheduler):
     def __init__(self, optimizer, num_warmup_steps, decay_start_step, num_decay_steps):
         self.num_warmup_steps = num_warmup_steps
@@ -897,10 +903,12 @@ def run():
         description="Train Deep Learning Recommendation Model (DLRM)"
     )
 
-    # 添加参数和参数的描述
-    # "--"开头的都是可选参数
+    # 添加参数:名称、描述、类型、默认值   
+    # "-"会自动转成"_",例如 arch-embedding-size -> arch_embedding_size
     # model related parameters
+    # sparse特征的embedding size，需要跟dense特征的size对齐
     parser.add_argument("--arch-sparse-feature-size", type=int, default=2)
+    # list，长度表示sparse特征的数量，值表示每个特征的可能取值数量
     parser.add_argument(
         "--arch-embedding-size", type=dash_separated_ints, default="4-3-2"
     )
@@ -1086,6 +1094,7 @@ def run():
 
     ### prepare training data ###
     # 从字符串创建一个一维的 NumPy 数组
+    # arch_mlp_bot：bottom mlp每一层的输入特征数量
     ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
 
@@ -1120,6 +1129,7 @@ def run():
     else:
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
+        # dense feature的数量
         m_den = ln_bot[0]
         train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(
             args, ln_emb, m_den
@@ -1134,15 +1144,19 @@ def run():
     ### parse command line arguments ###
     m_spa = args.arch_sparse_feature_size
     ln_emb = np.asarray(ln_emb)
+    # 所有连续特征经过mlp合并成一个特征
     num_fea = ln_emb.size + 1  # num sparse + num dense features
 
+    # dense特征经过mlp之后的size
     m_den_out = ln_bot[ln_bot.size - 1]
+    # 计算top mlp的输入数量
     if args.arch_interaction_op == "dot":
         # approach 1: all
+        # num_fea个特征之间两两点积，排列组合数量是(num_fea * (num_fea - 1)) // 2
         # num_int = num_fea * num_fea + m_den_out
-        # approach 2: unique
         if args.arch_interaction_itself:
             num_int = (num_fea * (num_fea + 1)) // 2 + m_den_out
+        # approach 2: unique
         else:
             num_int = (num_fea * (num_fea - 1)) // 2 + m_den_out
     elif args.arch_interaction_op == "cat":
@@ -1156,7 +1170,7 @@ def run():
     arch_mlp_top_adjusted = str(num_int) + "-" + args.arch_mlp_top
     ln_top = np.fromstring(arch_mlp_top_adjusted, dtype=int, sep="-")
 
-    # sanity check: feature sizes and mlp dimensions must match
+    # sanity check: dense feature sizes and mlp dimensions must match
     if m_den != ln_bot[0]:
         sys.exit(
             "ERROR: arch-dense-feature-size "
@@ -1164,6 +1178,7 @@ def run():
             + " does not match first dim of bottom mlp "
             + str(ln_bot[0])
         )
+    # 是否使用QR分解加速模型训练
     if args.qr_flag:
         if args.qr_operation == "concat" and 2 * m_spa != m_den_out:
             sys.exit(
@@ -1224,7 +1239,7 @@ def run():
         print(ln_bot)
         print("# of features (sparse and dense)")
         print(num_fea)
-        print("dense feature size")
+        print("# of dense features (input)")
         print(m_den)
         print("sparse feature size")
         print(m_spa)
@@ -1245,7 +1260,9 @@ def run():
             # early exit if nbatches was set by the user and has been exceeded
             if nbatches > 0 and j >= nbatches:
                 break
+            print("\n")
             print("mini-batch: %d" % j)
+            # 将tensor从计算图中分离出来，并将其从GPU内存移动到CPU内存
             print(X.detach().cpu())
             # transform offsets to lengths when printing
             print(
@@ -1332,6 +1349,16 @@ def run():
             "adagrad": torch.optim.Adagrad,
         }
 
+        """
+        如果只有单个计算节点, 那么所有参数的学习率都是args.learning_rate, 这时直接使用dlrm.parameters()返回所有参数即可
+        如果有多个计算节点, 进行分布式训练时, 需要设置不同参数组的学习率:
+            首先对embedding层设置学习率args.learning_rate, 字典包含两个键值对:
+                一个是params,表示该参数组的参数列表；
+                另一个是lr,表示该参数组的学习率。
+            然后,对bottom mlp层和top mlp层分别设置学习率args.learning_rate
+            最后,将这三个字典组成一个列表parameters, 作为optimizer的输入参数。
+            在实际训练中, optimizer将根据这个参数组列表, 为不同的参数组设置不同的学习率。
+        """
         parameters = (
             dlrm.parameters()
             if ext_dist.my_size == 1
@@ -1354,6 +1381,7 @@ def run():
             ]
         )
         optimizer = opts[args.optimizer](parameters, lr=args.learning_rate)
+        
         lr_scheduler = LRPolicyScheduler(
             optimizer,
             args.lr_num_warmup_steps,
@@ -1443,6 +1471,7 @@ def run():
             print("Testing state: accuracy = {:3.3f} %".format(ld_acc_test * 100))
 
     if args.inference_only:
+        # 模型量化
         # Currently only dynamic quantization with INT8 and FP16 weights are
         # supported for MLPs and INT4 and INT8 weights for EmbeddingBag
         # post-training quantization during the inference.
@@ -1497,6 +1526,7 @@ def run():
     writer = SummaryWriter(tb_file)
 
     ext_dist.barrier()
+    # 性能分析
     with torch.autograd.profiler.profile(
         args.enable_profiling, use_cuda=use_gpu, record_shapes=True
     ) as prof:
@@ -1891,4 +1921,7 @@ def run():
 
 
 if __name__ == "__main__":
+    import datetime
+    print(datetime.datetime.now())
     run()
+    print(datetime.datetime.now())

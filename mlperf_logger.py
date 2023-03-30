@@ -13,6 +13,7 @@ import os
 import torch
 
 try:
+    # https://github.com/mlcommons/logging
     from mlperf_logging import mllog
     from mlperf_logging.mllog import constants
 
@@ -30,7 +31,7 @@ def log_end(*args, **kwargs):
     "log with end tag"
     _log_print(_MLLOGGER.end, *args, **kwargs)
 
-
+# *args代表任何多个无名参数，返回的是元组；**kwargs表示关键字参数，所有传入的key=value，返回字典
 def log_event(*args, **kwargs):
     "log with event tag"
     _log_print(_MLLOGGER.event, *args, **kwargs)

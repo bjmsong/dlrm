@@ -569,6 +569,7 @@ def make_criteo_data_and_loaders(args, offset_to_length_converter=False):
 
 
 # uniform ditribution (input data)
+# 自定义数据集: 继承Dataset，重写__getitem__, __len__ 方法
 class RandomDataset(Dataset):
     def __init__(
         self,
@@ -624,11 +625,15 @@ class RandomDataset(Dataset):
         np.random.seed(numpy_rand_seed)
         # torch.manual_seed(numpy_rand_seed)
 
+    # 根据给定的索引返回相应的数据样本
     def __getitem__(self, index):
 
+        # 如果slice是切片类型，则迭代调用__getitem__方法，返回一个列表
         if isinstance(index, slice):
             return [
+                # 调用__getitem__方法
                 self[idx]
+                # 如果index.start为None，则默认取0
                 for idx in range(
                     index.start or 0, index.stop or len(self), index.step or 1
                 )
@@ -671,11 +676,12 @@ class RandomDataset(Dataset):
                 "ERROR: --data-generation=" + self.data_generation + " is not supported"
             )
 
-        # generate a batch of target (probability of a click)
+        # generate a batch of target (probability of a click)：为啥不是0/1，而是个概率值
         T = generate_random_output_batch(n, self.num_targets, self.round_targets)
 
         return (X, lS_o, lS_i, T)
 
+    # 返回batch的数量
     def __len__(self):
         # WARNING: note that we produce bacthes of outputs in __getitem__
         # therefore we should use num_batches rather than data_size below
@@ -701,6 +707,7 @@ def make_random_data_and_loader(
     offset_to_length_converter=False,
 ):
 
+    # 构造自定义数据集
     train_data = RandomDataset(
         m_den,
         ln_emb,
@@ -749,6 +756,7 @@ def make_random_data_and_loader(
     if offset_to_length_converter:
         collate_wrapper_random = collate_wrapper_random_length
 
+    # 从自定义数据集中批量(mini-batch)加载数据
     train_loader = torch.utils.data.DataLoader(
         train_data,
         batch_size=1,
@@ -912,9 +920,12 @@ def generate_dist_input_batch(
     rand_data_sigma,
 ):
     # dense feature
+    # 标准正态分布
+    # n个样本，m_den个feature
     Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
 
     # sparse feature (sparse indices)
+    # lS_emb_offsets和lS_emb_indices分别是存储离散特征偏移量和索引的列表
     lS_emb_offsets = []
     lS_emb_indices = []
     # for each embedding generate a list of n lookups,
